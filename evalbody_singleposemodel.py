@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import math
 from PIL import Image
+import cv2
 from utils import load_graph_model, get_input_tensors, get_output_tensors
 import tensorflow as tf
 # make tensorflow stop spamming messages
@@ -12,6 +13,12 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = "3"
 
 # perform inferencing on a single frame
 def imageProcess(img, modelPath, plotting = False):
+
+    # processes a 3D numpy array on the body pix algorithm and extracts the key points
+    # Inputs:   (img), numpy array of the image (RGB colour and MUST be rotated to be vertical person position)
+    #           (modelPath), bodypix model for inferencing
+    #           (plotting), boolean controlling if there is visualisation of the inference
+    # Outputs:  (output), dictionary containing all the inferenced information 
 
     # CONSTANTS
     OutputStride = 16
@@ -69,14 +76,18 @@ def imageProcess(img, modelPath, plotting = False):
     print("done.\nLoading sample image...", end="")
 
     # load sample image into numpy array
-    imgWidth, imgHeight = img.size
+    imgHeight, imgWidth, imgDim = img.shape
 
     targetWidth = (int(imgWidth) // OutputStride) * OutputStride + 1
     targetHeight = (int(imgHeight) // OutputStride) * OutputStride + 1
 
     print(imgHeight, imgWidth, targetHeight, targetWidth)
-    img = img.resize((targetWidth, targetHeight))
-    x = tf.keras.preprocessing.image.img_to_array(img, dtype=np.float32)
+    # img = img.resize((targetWidth, targetHeight))
+
+    img = cv2.resize(img, (targetWidth, targetHeight))
+    x = img.copy()      # this is just to minimise changes to the code from the original version
+
+    # x = tf.keras.preprocessing.image.img_to_array(img, dtype=np.float32)
     InputImageShape = x.shape
     print("Input Image Shape in hwc", InputImageShape)
 
@@ -113,6 +124,8 @@ def imageProcess(img, modelPath, plotting = False):
                         input_tensor: sample_image})
     print("done. {} outputs received".format(len(results)))  # should be 8 outputs
 
+    output = {}
+
     for idx, name in enumerate(output_tensor_names):
         if 'displacement_bwd' in name:
             print('displacement_bwd', results[idx].shape)
@@ -120,21 +133,27 @@ def imageProcess(img, modelPath, plotting = False):
             print('displacement_fwd', results[idx].shape)
         elif 'float_heatmaps' in name:
             heatmaps = np.squeeze(results[idx], 0)
+            output['heatmaps'] = heatmaps
             print('heatmaps', heatmaps.shape)
         elif 'float_long_offsets' in name:
             longoffsets = np.squeeze(results[idx], 0)
+            output['longoffsets'] = longoffsets
             print('longoffsets', longoffsets.shape)
         elif 'float_short_offsets' in name:
             offsets = np.squeeze(results[idx], 0)
+            output['offsets'] = offsets
             print('offests', offsets.shape)
         elif 'float_part_heatmaps' in name:
             partHeatmaps = np.squeeze(results[idx], 0)
+            output['partHeatmaps'] = partHeatmaps
             print('partHeatmaps', partHeatmaps.shape)
         elif 'float_segments' in name:
             segments = np.squeeze(results[idx], 0)
+            output['segments'] = segments
             print('segments', segments.shape)
         elif 'float_part_offsets' in name:
             partOffsets = np.squeeze(results[idx], 0)
+            output['partOffsets'] = partOffsets
             print('partOffsets', partOffsets.shape)
         else:
             print('Unknown Output Tensor', name, idx)
@@ -151,48 +170,40 @@ def imageProcess(img, modelPath, plotting = False):
 
         # partOffsetVector, partHeatmapPositions, partPositions, partScores, partMasks = pltSegmentation(img, segments, OutputStride, segmentation_threshold, mask, targetWidth, targetHeight)
        
-        returnSeg = pltSegmentation(img, segments, OutputStride, segmentation_threshold, mask, targetWidth, targetHeight)
+        fg, bg = pltSegmentation(img, segments, OutputStride, mask, plotting)
 
-        returnHeat = pltHeatMap(mask, partHeatmaps, partOffsets, offsets, PART_CHANNELS, OutputStride, heatmaps, returnSeg)
-        imagePath = ''
-        pltPoints(img, imagePath, CONNECTED_KEYPOINT_INDICES, returnHeat)
+        returnHeat = HeatMap(mask, partHeatmaps, partOffsets, offsets, heatmaps, PART_CHANNELS, OutputStride, plotting = False)
 
-        print('heatmapPositions', np.asarray(returnHeat['heatmapPositions']).shape)
-        print('offsetVector', np.asarray(returnHeat['offsetVector']).shape)
-        print('keypointPositions', np.asarray(returnHeat['keypointPositions']).shape)
-        print('keyScores', np.asarray(returnHeat['keyScores']).shape)
+        pltPoints(img, CONNECTED_KEYPOINT_INDICES, KEYPOINT_NAMES, returnHeat['keypointPositions'], plotting = False)
 
         # PRINT KEYPOINT CONFIDENCE SCORES
         print("Keypoint Confidence Score")
-        for i, score in enumerate(keyScores):
+        for i, score in enumerate(returnHeat['keyScores']):
             print(KEYPOINT_NAMES[i], score)
 
         # PRINT POSE CONFIDENCE SCORE
-        print("Pose Confidence Score", np.mean(np.asarray(keyScores)))
+        print("\nPose Confidence Score", np.mean(np.asarray(returnHeat['keyScores'])))
+
+    return(output)
 
 # plotting the masks
-def pltSegmentation(img, segments, OutputStride, segmentation_threshold, mask, targetWidth, targetHeight):
+def pltSegmentation(img, segments, OutputStride, mask, plotting):
 
-    # plot the segmentations
+    # plots the masks from segmentation which identify the foreground and background
+    # Inputs:   (img), numpy array of the frame
+    #           (segments), inference output
+    #           (OutputStride), size of the filter moving across the image
+    #           (mask), ??? TBC but its function is to differentiate the fg and bg
+    #           (plotting), boolean whether to plot the results 
+    # Outputs:  (fg), the foreground identifying the outline of the person
+    #           (bg), the background identifying everything non-person
 
-    # BODYPART SEGMENTATION
-    partOffsetVector = []
-    partHeatmapPositions = []
-    partPositions = []
-    partScores = []
-    partMasks = []
+    targetHeight, targetWidth , imgDim = img.shape
 
     segmentationMask = tf.dtypes.cast(mask, tf.int32)
     segmentationMask = np.reshape(
         segmentationMask, (segmentationMask.shape[0], segmentationMask.shape[1]))
     print('maskValue', segmentationMask[:][:])
-
-    plt.clf()
-    plt.title('Segmentation Mask')
-    plt.ylabel('y')
-    plt.xlabel('x')
-    plt.imshow(segmentationMask * OutputStride)
-    plt.show()
 
     # Draw Segmented Output
     mask_img = Image.fromarray(segmentationMask * 255)
@@ -201,36 +212,55 @@ def pltSegmentation(img, segments, OutputStride, segmentation_threshold, mask, t
     mask_img = tf.keras.preprocessing.image.img_to_array(
         mask_img, dtype=np.uint8)
 
+    fg = np.bitwise_and(img, np.array(
+    mask_img))
+
     segmentationMask_inv = np.bitwise_not(mask_img)
-    fg = np.bitwise_and(np.array(img), np.array(
-        mask_img))
-    plt.title('Foreground Segmentation')
-    plt.imshow(fg)
-    plt.show()
-    bg = np.bitwise_and(np.array(img), np.array(
-        segmentationMask_inv))
-    plt.title('Background Segmentation')
-    plt.imshow(bg)
-    plt.show()
+    bg = np.bitwise_and(img, np.array(
+            segmentationMask_inv))
 
-    returns = {'partOffsetVector': partOffsetVector,
-    'partHeatmapPositions': partHeatmapPositions,
-    'partPositions': partPositions,
-    'partScores': partScores,
-    'partMasks': partMasks}
+    if plotting:
+        plt.clf()
+        plt.title('Segmentation Mask')
+        plt.ylabel('y')
+        plt.xlabel('x')
+        plt.imshow(segmentationMask * OutputStride)
+        plt.show()
+        plt.title('Foreground Segmentation')
+        plt.imshow(fg)
+        plt.show()
+        plt.title('Background Segmentation')
+        plt.imshow(bg)
+        plt.show()
     
-
-    return(returns)
+    return(fg, bg)
 
 # plotting the heat maps
-def pltHeatMap(mask, partHeatmaps, partOffsets, offsets, PART_CHANNELS, OutputStride, heatmaps, returnSeg):
+def HeatMap(mask, partHeatmaps, partOffsets, offsets, heatmaps, PART_CHANNELS, OutputStride, plotting):
 
-    # allocate lists from dictionay
-    partOffsetVector = returnSeg['partOffsetVector']
-    partHeatmapPositions = returnSeg['partHeatmapPositions']
-    partPositions = returnSeg['partPositions']
-    partScores = returnSeg['partScores']
-    partMasks = returnSeg['partMasks']
+    # this function calculates some of the key scores such as detected positions and 
+    # scores of the detected points and optionally produces heat maps visually representing
+    # these results
+    # Input:    (img), numpy array of the loaded image 
+    #           (partHeatMaps), inference output
+    #           (partOffSets), inference output
+    #           (offsets), inference output
+    #           (heatmaps), inference output
+    #           (PART_CHANNELS), body locations being located
+    #           (OutputStride), size of the filter moving across the image
+    #           (plotting), boolean whether to plot the results
+    # Output:   (returns), dictionary containing the key information:
+    #               offsetVector - ?
+    #               heatmapPositions - ?
+    #               keypointPositions - ?
+    #               keyScores - probability of match
+
+    # BODYPART SEGMENTATION
+    partOffsetVector = []
+    partHeatmapPositions = []
+    partPositions = []
+    partScores = []
+    partMasks = []
 
     # Part Heatmaps, PartOffsets,
     for i in range(partHeatmaps.shape[2]):
@@ -238,15 +268,6 @@ def pltHeatMap(mask, partHeatmaps, partOffsets, offsets, PART_CHANNELS, OutputSt
         heatmap = partHeatmaps[:, :, i]  # First Heat map
         heatmap[np.logical_not(tf.math.reduce_any(mask, axis=-1).numpy())] = -1
         # Set portions of heatmap where person is not present in segmentation mask, set value to -1
-
-        # SHOW HEATMAPS
-
-        plt.clf()
-        plt.title('Heatmap: ' + PART_CHANNELS[i])
-        plt.ylabel('y')
-        plt.xlabel('x')
-        plt.imshow(heatmap * OutputStride)
-        plt.show()
 
         heatmap_sigmoid = tf.sigmoid(heatmap)
         y_heat, x_heat = np.unravel_index(
@@ -263,11 +284,19 @@ def pltHeatMap(mask, partHeatmaps, partOffsets, offsets, PART_CHANNELS, OutputSt
         key_y = y_heat * OutputStride + y_offset
         partPositions.append([key_x, key_y])
 
+        # SHOW HEATMAPS
+        if plotting:
+            plt.clf()
+            plt.title('Heatmap: ' + PART_CHANNELS[i])
+            plt.ylabel('y')
+            plt.xlabel('x')
+            plt.imshow(heatmap * OutputStride)
+            plt.show()
 
-    print('partheatmapPositions', np.asarray(partHeatmapPositions).shape)
-    print('partoffsetVector', np.asarray(partOffsetVector).shape)
-    print('partkeypointPositions', np.asarray(partPositions).shape)
-    print('partkeyScores', np.asarray(partScores).shape)
+            print('partheatmapPositions', np.asarray(partHeatmapPositions).shape)
+            print('partoffsetVector', np.asarray(partOffsetVector).shape)
+            print('partkeypointPositions', np.asarray(partPositions).shape)
+            print('partkeyScores', np.asarray(partScores).shape)
 
 
     # POSE ESTIMATION
@@ -312,77 +341,79 @@ def pltHeatMap(mask, partHeatmaps, partOffsets, offsets, PART_CHANNELS, OutputSt
     return(returns)
 
 # plotting the processed points
-def pltPoints(img, imagePath, CONNECTED_KEYPOINT_INDICES, returnHeat):
+def pltPoints(img, CONNECTED_KEYPOINT_INDICES, KEYPOINT_NAMES, keypointPositions, plotting):
 
-    offsetVector = returnHeat['offsetVector']
-    heatmapPositions = returnHeat['heatmapPositions']
-    keypointPositions = returnHeat['keypointPositions']
-    keyScores = returnHeat['keyScores']
+    # plots where the key locations points are on the identified person in frame
+    # Inputs:
+    # Outputs:  (), none but if called will produce images showing the detected points
 
-    # Get Bounding BOX
-    (xmin, ymin), (xmax, ymax) = getBoundingBox(
-    keypointPositions, offset=(0, 0, 0, 0))
+    # function for pltPoints which get co-ordinates of boxed areas
+    def getBoundingBox(keypointPositions, offset=(10, 10, 10, 10)):
+        minX = math.inf
+        minY = math.inf
+        maxX = - math.inf
+        maxY = -math.inf
+        for x, y in keypointPositions:
+            if (x < minX):
+                minX = x
+            if(y < minY):
+                minY = y
+            if(x > maxX):
+                maxX = x
+            if (y > maxY):
+                maxY = y
+        return (minX - offset[0], minY-offset[1]), (maxX+offset[2], maxY + offset[3])
 
-    # Show Bounding BOX
-    implot = plt.imshow(img)
-    # Get the current reference
-    ax = plt.gca()
-    # Create a Rectangle patch
-    rect = patches.Rectangle((xmin, ymin), xmax-xmin, ymax-ymin,
-                            linewidth=1, edgecolor='r', facecolor='none', fill=False)
+    if plotting:
 
-    # Add the patch
-    ax.add_patch(rect)
-    plt.show()
+        # Get Bounding BOX
+        (xmin, ymin), (xmax, ymax) = getBoundingBox(
+        keypointPositions, offset=(0, 0, 0, 0))
 
-    # Show all keypoints
-    plt.figure(0)
-    plt.imshow(img)
-
-    x_points = []
-    y_points = []
-    for i, [x, y] in enumerate(keypointPositions):
-        x_points.append(x)
-        y_points.append(y)
-    plt.scatter(x=x_points, y=y_points, c='r', s=40)
-    plt.show()
-
-
-    # DEBUG KEYPOINTS
-    #  Show Each Keypoint and it's name
-    '''
-    for i, [x, y] in enumerate(keypointPositions):
-        plt.figure(i)
-        plt.title('keypoint' + str(i) + KEYPOINT_NAMES[i])
-    #    img = plt.imread(imagePath)
+        # Show Bounding BOX
         implot = plt.imshow(img)
+        # Get the current reference
+        ax = plt.gca()
+        # Create a Rectangle patch
+        rect = patches.Rectangle((xmin, ymin), xmax-xmin, ymax-ymin,
+                                linewidth=1, edgecolor='r', facecolor='none', fill=False)
 
-        plt.scatter(x=[x], y=[y], c='r', s=40)
+        # Add the patch
+        ax.add_patch(rect)
         plt.show()
-    '''
 
-    # SHOW CONNECTED KEYPOINTS
-    plt.figure(20)
-    for pt1, pt2 in CONNECTED_KEYPOINT_INDICES:
-        plt.title('connection points')
-        implot = plt.imshow(img)
-        plt.plot((keypointPositions[pt1][0], keypointPositions[pt2][0]), (
-            keypointPositions[pt1][1], keypointPositions[pt2][1]), 'ro-', linewidth=2, markersize=5)
-    plt.show()
+        # Show all keypoints
+        plt.figure(0)
+        plt.imshow(img)
 
-# function for pltPoints which get co-ordinates of boxed areas
-def getBoundingBox(keypointPositions, offset=(10, 10, 10, 10)):
-    minX = math.inf
-    minY = math.inf
-    maxX = - math.inf
-    maxY = -math.inf
-    for x, y in keypointPositions:
-        if (x < minX):
-            minX = x
-        if(y < minY):
-            minY = y
-        if(x > maxX):
-            maxX = x
-        if (y > maxY):
-            maxY = y
-    return (minX - offset[0], minY-offset[1]), (maxX+offset[2], maxY + offset[3])
+        x_points = []
+        y_points = []
+        for i, [x, y] in enumerate(keypointPositions):
+            x_points.append(x)
+            y_points.append(y)
+        plt.scatter(x=x_points, y=y_points, c='r', s=40)
+        plt.show()
+
+
+        # DEBUG KEYPOINTS
+        #  Show Each Keypoint and it's name
+        
+        for i, [x, y] in enumerate(keypointPositions):
+            plt.figure(i)
+            plt.title('keypoint' + str(i) + KEYPOINT_NAMES[i])
+        #    img = plt.imread(imagePath)
+            implot = plt.imshow(img)
+
+            plt.scatter(x=[x], y=[y], c='r', s=40)
+            plt.show()
+
+        # SHOW CONNECTED KEYPOINTS
+        plt.figure(20)
+        for pt1, pt2 in CONNECTED_KEYPOINT_INDICES:
+            plt.title('connection points')
+            implot = plt.imshow(img)
+            plt.plot((keypointPositions[pt1][0], keypointPositions[pt2][0]), (
+                keypointPositions[pt1][1], keypointPositions[pt2][1]), 'ro-', linewidth=2, markersize=5)
+        plt.show()
+
+
