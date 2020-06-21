@@ -5,7 +5,7 @@ To observe a user performing knee flexion exercises and track their motion and c
 # Getting Started
 1. Install requirements in virtual environment
 
-```
+```bash
 python -m venv venvSBP
 . venvSBP/bin/activate
 pip install -r requirements.txt
@@ -23,6 +23,9 @@ videoPath = './awesome_vid.mov'
 modelPath = './bodypix_resnet50_float_model-stride16/'
 ```
 4. Run the script
+```bash
+python evalbody_singleposemodel.py
+```
 
 # Acknowledgement
 1. https://github.com/ajaichemmanam/simple_bodypix_python for model loading function
