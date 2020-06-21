@@ -10,7 +10,7 @@ python -m venv venvSBP
 pip install -r requirements.txt
 ```
 
-2. Download tfjs models for bodypix.
+2. Download desired tfjs models for bodypix.
 ```bash
 # For example, download a ResNet50-based model to ./bodypix_resnet50_float_model-stride16
 $ ./get-model.sh bodypix/resnet50/float/model-stride16
@@ -18,7 +18,7 @@ $ ./get-model.sh bodypix/resnet50/float/model-stride16
 
 3. Set path to models and image for inference in .py files
 ```py
-videoPath = './awesome_img.jpg'
+videoPath = './awesome_vid.mov'
 modelPath = './bodypix_resnet50_float_model-stride16/'
 ```
 4. Run the script
