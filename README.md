@@ -1,5 +1,6 @@
-# MODEL IS BASED ON 
-https://github.com/ajaichemmanam/simple_bodypix_python
+# Purpose
+
+To observe a user performing knee flexion exercises and track their motion and calculate their range of motion across the entirety of the video
 
 # Getting Started
 1. Install requirements in virtual environment
