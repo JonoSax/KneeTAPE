@@ -14,6 +14,7 @@ pip install -r requirements.txt
 2. Download desired tfjs models for bodypix.
 ```bash
 # For example, download a ResNet50-based model to ./bodypix_resnet50_float_model-stride16
+# bodypix/mobilenet/float/050/model-stride8.json
 $ ./get-model.sh bodypix/resnet50/float/model-stride16
 ```
 

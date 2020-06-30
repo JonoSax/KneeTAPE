@@ -18,7 +18,7 @@ def imageProcess(img, modelPath, plotting = False):
     # Inputs:   (img), numpy array of the image (RGB colour and MUST be rotated to be vertical person position)
     #           (modelPath), bodypix model for inferencing
     #           (plotting), boolean controlling if there is visualisation of the inference
-    # Outputs:  (output), dictionary containing all the inferenced information 
+    # Outputs:  (output), dictionary containing all the inferenced and chosen processed information 
 
     # CONSTANTS
     OutputStride = 16
@@ -71,9 +71,9 @@ def imageProcess(img, modelPath, plotting = False):
         'right_feet'
     ]
 
-    print("Loading model...", end="")
+    # print("Loading model...", end="")
     graph = load_graph_model(modelPath)  # downloaded from the link above
-    print("done.\nLoading sample image...", end="")
+    # print("done.\nLoading sample image...", end="")
 
     # load sample image into numpy array
     imgHeight, imgWidth, imgDim = img.shape
@@ -81,7 +81,7 @@ def imageProcess(img, modelPath, plotting = False):
     targetWidth = (int(imgWidth) // OutputStride) * OutputStride + 1
     targetHeight = (int(imgHeight) // OutputStride) * OutputStride + 1
 
-    print(imgHeight, imgWidth, targetHeight, targetWidth)
+    # print(imgHeight, imgWidth, targetHeight, targetWidth)
     # img = img.resize((targetWidth, targetHeight))
 
     img = cv2.resize(img, (targetWidth, targetHeight))
@@ -89,18 +89,18 @@ def imageProcess(img, modelPath, plotting = False):
 
     # x = tf.keras.preprocessing.image.img_to_array(img, dtype=np.float32)
     InputImageShape = x.shape
-    print("Input Image Shape in hwc", InputImageShape)
+    # print("Input Image Shape in hwc", InputImageShape)
 
 
     widthResolution = int((InputImageShape[1] - 1) / OutputStride) + 1
     heightResolution = int((InputImageShape[0] - 1) / OutputStride) + 1
-    print('Resolution', widthResolution, heightResolution)
+    # print('Resolution', widthResolution, heightResolution)
 
     # Get input and output tensors
     input_tensor_names = get_input_tensors(graph)
-    print(input_tensor_names)
+    # print(input_tensor_names)
     output_tensor_names = get_output_tensors(graph)
-    print(output_tensor_names)
+    # print(output_tensor_names)
     input_tensor = graph.get_tensor_by_name(input_tensor_names[0])
 
     # Preprocessing Image
@@ -115,46 +115,46 @@ def imageProcess(img, modelPath, plotting = False):
     else:
         print('Unknown Model')
     sample_image = x[tf.newaxis, ...]
-    print("done.\nRunning inference...", end="")
+    # print("done.\nRunning inference...", end="")
 
     # NOTE THESE ARE THE RESULTS
     # evaluate the loaded model directly
     with tf.compat.v1.Session(graph=graph) as sess:
         results = sess.run(output_tensor_names, feed_dict={
                         input_tensor: sample_image})
-    print("done. {} outputs received".format(len(results)))  # should be 8 outputs
+    # print("done. {} outputs received".format(len(results)))  # should be 8 outputs
 
     output = {}
 
     for idx, name in enumerate(output_tensor_names):
-        if 'displacement_bwd' in name:
-            print('displacement_bwd', results[idx].shape)
-        elif 'displacement_fwd' in name:
-            print('displacement_fwd', results[idx].shape)
-        elif 'float_heatmaps' in name:
+        # if 'displacement_bwd' in name:
+            # print('displacement_bwd', results[idx].shape)
+        # elif 'displacement_fwd' in name:
+            # print('displacement_fwd', results[idx].shape)
+        if 'float_heatmaps' in name:
             heatmaps = np.squeeze(results[idx], 0)
             output['heatmaps'] = heatmaps
-            print('heatmaps', heatmaps.shape)
+            # print('heatmaps', heatmaps.shape)
         elif 'float_long_offsets' in name:
             longoffsets = np.squeeze(results[idx], 0)
             output['longoffsets'] = longoffsets
-            print('longoffsets', longoffsets.shape)
+            # print('longoffsets', longoffsets.shape)
         elif 'float_short_offsets' in name:
             offsets = np.squeeze(results[idx], 0)
             output['offsets'] = offsets
-            print('offests', offsets.shape)
+            # print('offests', offsets.shape)
         elif 'float_part_heatmaps' in name:
             partHeatmaps = np.squeeze(results[idx], 0)
             output['partHeatmaps'] = partHeatmaps
-            print('partHeatmaps', partHeatmaps.shape)
+            # print('partHeatmaps', partHeatmaps.shape)
         elif 'float_segments' in name:
             segments = np.squeeze(results[idx], 0)
             output['segments'] = segments
-            print('segments', segments.shape)
+            # print('segments', segments.shape)
         elif 'float_part_offsets' in name:
             partOffsets = np.squeeze(results[idx], 0)
             output['partOffsets'] = partOffsets
-            print('partOffsets', partOffsets.shape)
+            # print('partOffsets', partOffsets.shape)
         else:
             print('Unknown Output Tensor', name, idx)
 
@@ -162,27 +162,28 @@ def imageProcess(img, modelPath, plotting = False):
     segmentation_threshold = 0.7
     segmentScores = tf.sigmoid(segments)
     mask = tf.math.greater(segmentScores, tf.constant(segmentation_threshold))
-    print('maskshape', mask.shape)
+    # print('maskshape', mask.shape)
 
     # -------------- PLOTTING RESULTS --------------
 
-    if plotting:
+    # partOffsetVector, partHeatmapPositions, partPositions, partScores, partMasks = pltSegmentation(img, segments, OutputStride, segmentation_threshold, mask, targetWidth, targetHeight)
+    
+    fg, bg = pltSegmentation(img, segments, OutputStride, mask, plotting)
+    output['foreground'] = fg
+    output['background'] = bg
 
-        # partOffsetVector, partHeatmapPositions, partPositions, partScores, partMasks = pltSegmentation(img, segments, OutputStride, segmentation_threshold, mask, targetWidth, targetHeight)
-       
-        fg, bg = pltSegmentation(img, segments, OutputStride, mask, plotting)
+    returnHeat = HeatMap(mask, partHeatmaps, partOffsets, offsets, heatmaps, PART_CHANNELS, OutputStride, plotting = False)
+    output['keyScores'] = returnHeat['keyScores']
 
-        returnHeat = HeatMap(mask, partHeatmaps, partOffsets, offsets, heatmaps, PART_CHANNELS, OutputStride, plotting = False)
+    pltPoints(img, CONNECTED_KEYPOINT_INDICES, KEYPOINT_NAMES, returnHeat['keypointPositions'], plotting = False)
 
-        pltPoints(img, CONNECTED_KEYPOINT_INDICES, KEYPOINT_NAMES, returnHeat['keypointPositions'], plotting = False)
+    # # print KEYPOINT CONFIDENCE SCORES
+    # print("Keypoint Confidence Score")
+    for i, score in enumerate(returnHeat['keyScores']):
+        print(KEYPOINT_NAMES[i], score)
 
-        # PRINT KEYPOINT CONFIDENCE SCORES
-        print("Keypoint Confidence Score")
-        for i, score in enumerate(returnHeat['keyScores']):
-            print(KEYPOINT_NAMES[i], score)
-
-        # PRINT POSE CONFIDENCE SCORE
-        print("\nPose Confidence Score", np.mean(np.asarray(returnHeat['keyScores'])))
+    # # print POSE CONFIDENCE SCORE
+    # print("\nPose Confidence Score", np.mean(np.asarray(returnHeat['keyScores'])))
 
     return(output)
 
@@ -198,12 +199,12 @@ def pltSegmentation(img, segments, OutputStride, mask, plotting):
     # Outputs:  (fg), the foreground identifying the outline of the person
     #           (bg), the background identifying everything non-person
 
-    targetHeight, targetWidth , imgDim = img.shape
+    targetHeight, targetWidth, imgDim = img.shape
 
     segmentationMask = tf.dtypes.cast(mask, tf.int32)
     segmentationMask = np.reshape(
         segmentationMask, (segmentationMask.shape[0], segmentationMask.shape[1]))
-    print('maskValue', segmentationMask[:][:])
+    # print('maskValue', segmentationMask[:][:])
 
     # Draw Segmented Output
     mask_img = Image.fromarray(segmentationMask * 255)
@@ -293,10 +294,10 @@ def HeatMap(mask, partHeatmaps, partOffsets, offsets, heatmaps, PART_CHANNELS, O
             plt.imshow(heatmap * OutputStride)
             plt.show()
 
-            print('partheatmapPositions', np.asarray(partHeatmapPositions).shape)
-            print('partoffsetVector', np.asarray(partOffsetVector).shape)
-            print('partkeypointPositions', np.asarray(partPositions).shape)
-            print('partkeyScores', np.asarray(partScores).shape)
+            # print('partheatmapPositions', np.asarray(partHeatmapPositions).shape)
+            # print('partoffsetVector', np.asarray(partOffsetVector).shape)
+            # print('partkeypointPositions', np.asarray(partPositions).shape)
+            # print('partkeyScores', np.asarray(partScores).shape)
 
 
     # POSE ESTIMATION
