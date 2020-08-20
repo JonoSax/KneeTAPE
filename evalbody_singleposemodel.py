@@ -24,11 +24,24 @@ def imageProcess(img, modelPath, plotting = False):
     OutputStride = 16
 
     KEYPOINT_NAMES = [
-        "nose", "leftEye", "rightEye", "leftEar", "rightEar", "leftShoulder",
-        "rightShoulder", "leftElbow", "rightElbow", "leftWrist", "rightWrist",
-        "leftHip", "rightHip", "leftKnee", "rightKnee", "leftAnkle", "rightAnkle"
+        "nose", 
+        "leftEye", 
+        "rightEye", 
+        "leftEar", 
+        "rightEar", 
+        "leftShoulder",
+        "rightShoulder", 
+        "leftElbow", 
+        "rightElbow", 
+        "leftWrist",
+        "rightWrist",
+        "leftHip", 
+        "rightHip", 
+        "leftKnee", 
+        "rightKnee", 
+        "leftAnkle", 
+        "rightAnkle"
     ]
-
 
     KEYPOINT_IDS = {name: id for id, name in enumerate(KEYPOINT_NAMES)}
 
@@ -125,6 +138,12 @@ def imageProcess(img, modelPath, plotting = False):
     # print("done. {} outputs received".format(len(results)))  # should be 8 outputs
 
     output = {}
+    output['heatmaps'] = {}
+    output['longoffsets'] = {}
+    output['offsets'] = {}
+    output['partHeatmaps'] = {}
+    output['segments'] = {}
+    output['partOffsets'] = {}
 
     for idx, name in enumerate(output_tensor_names):
         # if 'displacement_bwd' in name:
@@ -133,27 +152,27 @@ def imageProcess(img, modelPath, plotting = False):
             # print('displacement_fwd', results[idx].shape)
         if 'float_heatmaps' in name:
             heatmaps = np.squeeze(results[idx], 0)
-            output['heatmaps'] = heatmaps
+            output['heatmaps'][name] = heatmaps
             # print('heatmaps', heatmaps.shape)
         elif 'float_long_offsets' in name:
             longoffsets = np.squeeze(results[idx], 0)
-            output['longoffsets'] = longoffsets
+            output['longoffsets'][name] = longoffsets
             # print('longoffsets', longoffsets.shape)
         elif 'float_short_offsets' in name:
             offsets = np.squeeze(results[idx], 0)
-            output['offsets'] = offsets
+            output['offsets'][name] = offsets
             # print('offests', offsets.shape)
         elif 'float_part_heatmaps' in name:
             partHeatmaps = np.squeeze(results[idx], 0)
-            output['partHeatmaps'] = partHeatmaps
+            output['partHeatmaps'][name] = partHeatmaps
             # print('partHeatmaps', partHeatmaps.shape)
         elif 'float_segments' in name:
             segments = np.squeeze(results[idx], 0)
-            output['segments'] = segments
+            output['segments'][name] = segments
             # print('segments', segments.shape)
         elif 'float_part_offsets' in name:
             partOffsets = np.squeeze(results[idx], 0)
-            output['partOffsets'] = partOffsets
+            output['partOffsets'][name] = partOffsets
             # print('partOffsets', partOffsets.shape)
         else:
             print('Unknown Output Tensor', name, idx)
@@ -162,25 +181,35 @@ def imageProcess(img, modelPath, plotting = False):
     segmentation_threshold = 0.7
     segmentScores = tf.sigmoid(segments)
     mask = tf.math.greater(segmentScores, tf.constant(segmentation_threshold))
+
+    # create a mask of the lower pody segments
+    lowerBodyMask = np.zeros(partHeatmaps.shape[0:2])
+    for i in range(14, 24): # this is hardcoded to only find the segments of the leg
+        lowerBodyMask += tf.sigmoid(partHeatmaps[:, :, i] * np.squeeze(mask)) - 0.5
+
+    # create a mask of the upper body segments
+    upperBodyMask = np.zeros(partHeatmaps.shape[0:2])
+    for i in range(14): # this is hardcoded to only find the segments of the leg
+        upperBodyMask += tf.sigmoid(partHeatmaps[:, :, i] * np.squeeze(mask)) - 0.5
+
     # print('maskshape', mask.shape)
 
     # -------------- PLOTTING RESULTS --------------
 
     # partOffsetVector, partHeatmapPositions, partPositions, partScores, partMasks = pltSegmentation(img, segments, OutputStride, segmentation_threshold, mask, targetWidth, targetHeight)
     
-    fg, bg = pltSegmentation(img, segments, OutputStride, mask, plotting)
+    fg, bg, segmentationMask = pltSegmentation(img, segments, OutputStride, mask, plotting)
     output['foreground'] = fg
     output['background'] = bg
+    output['mask'] = np.squeeze(segmentScores)
+    output['lowerBodyMask'] = lowerBodyMask
+    output['upperBodyMask'] = upperBodyMask
+    output['keypointNames'] = KEYPOINT_NAMES
 
     returnHeat = HeatMap(mask, partHeatmaps, partOffsets, offsets, heatmaps, PART_CHANNELS, OutputStride, plotting = False)
-    output['keyScores'] = returnHeat['keyScores']
+    output['heatmap'] = returnHeat
 
-    pltPoints(img, CONNECTED_KEYPOINT_INDICES, KEYPOINT_NAMES, returnHeat['keypointPositions'], plotting = False)
-
-    # # print KEYPOINT CONFIDENCE SCORES
-    # print("Keypoint Confidence Score")
-    for i, score in enumerate(returnHeat['keyScores']):
-        print(KEYPOINT_NAMES[i], score)
+    output['allocatedKeypoints'] = pltPoints(img, CONNECTED_KEYPOINT_INDICES, KEYPOINT_NAMES, returnHeat['keypointPositions'], plotting = False)
 
     # # print POSE CONFIDENCE SCORE
     # print("\nPose Confidence Score", np.mean(np.asarray(returnHeat['keyScores'])))
@@ -234,7 +263,7 @@ def pltSegmentation(img, segments, OutputStride, mask, plotting):
         plt.imshow(bg)
         plt.show()
     
-    return(fg, bg)
+    return(fg, bg, segmentationMask)
 
 # plotting the heat maps
 def HeatMap(mask, partHeatmaps, partOffsets, offsets, heatmaps, PART_CHANNELS, OutputStride, plotting):
@@ -365,6 +394,12 @@ def pltPoints(img, CONNECTED_KEYPOINT_INDICES, KEYPOINT_NAMES, keypointPositions
                 maxY = y
         return (minX - offset[0], minY-offset[1]), (maxX+offset[2], maxY + offset[3])
 
+    allocate = {}
+
+    for i in range(len(KEYPOINT_NAMES)):
+        allocate[KEYPOINT_NAMES[i]] = np.array(keypointPositions)[i, :]
+
+
     if plotting:
 
         # Get Bounding BOX
@@ -416,5 +451,7 @@ def pltPoints(img, CONNECTED_KEYPOINT_INDICES, KEYPOINT_NAMES, keypointPositions
             plt.plot((keypointPositions[pt1][0], keypointPositions[pt2][0]), (
                 keypointPositions[pt1][1], keypointPositions[pt2][1]), 'ro-', linewidth=2, markersize=5)
         plt.show()
+
+    return(allocate)
 
 
