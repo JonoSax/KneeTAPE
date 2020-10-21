@@ -25,7 +25,7 @@ modelPath = './bodypix_resnet50_float_model-stride16/'
 ```
 4. Run the script
 ```bash
-python evalbody_singleposemodel.py
+python evalbody_singleposemodelVIDEO.py
 ```
 
 # Acknowledgement
